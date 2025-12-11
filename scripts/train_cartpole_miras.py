@@ -49,7 +49,8 @@ def main():
                 f"eval={eval_stats['eval_mean_reward']:.2f}"
             )
 
-    envs.close()
+    for env in envs:
+        env.close()
     print("Training complete.")
 
 

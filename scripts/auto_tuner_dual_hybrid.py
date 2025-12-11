@@ -37,7 +37,8 @@ def run_trial(base_cfg, hidden_dim, use_miras, use_attention, num_iters=10):
         eval_stats = trainer.evaluate(envs, num_episodes=3)
         best_return = max(best_return, eval_stats["eval_mean_reward"])
 
-    envs.close()
+    for env in envs:
+        env.close()
     return best_return
 
 

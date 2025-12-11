@@ -448,6 +448,10 @@ class DualTierMiras(nn.Module):
         self.fast_mem.reset_state()
         self.deep_mem.reset_state()
 
+    def reset(self) -> None:
+        """Alias for reset_state() - resets memory without resetting learned params."""
+        self.reset_state()
+
     def reset_parameters(self) -> None:
         """Full parameter reset."""
         self.fast_mem.reset_parameters()

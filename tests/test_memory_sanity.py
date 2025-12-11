@@ -10,7 +10,7 @@ import torch
 import pytest
 
 from infinity_dual_hybrid.miras import DualTierMiras
-from infinity_dual_hybrid.ltm import build_ltm, SimpleLTM
+from infinity_dual_hybrid.ltm import build_ltm, SimpleLTM, LTMWrapper
 from infinity_dual_hybrid.config import MirasConfig, LTMConfig
 
 
@@ -55,10 +55,12 @@ class TestLTMSanity:
     def test_simple_ltm_creates(self):
         cfg = LTMConfig(d_key=64, d_value=64, use_faiss=False)
         ltm = build_ltm(cfg)
-        assert isinstance(ltm, SimpleLTM)
+        # build_ltm returns LTMWrapper, check inner _ltm is SimpleLTM
+        assert isinstance(ltm, LTMWrapper)
+        assert isinstance(ltm._ltm, SimpleLTM)
 
     def test_simple_ltm_store_retrieve(self):
-        cfg = LTMConfig(d_key=64, d_value=64, use_faiss=False, max_entries=100)
+        cfg = LTMConfig(d_key=64, d_value=64, use_faiss=False, max_size=100)
         ltm = build_ltm(cfg)
 
         keys = torch.randn(10, 64)
@@ -67,8 +69,8 @@ class TestLTMSanity:
         ltm.store(keys, values)
         retrieved = ltm.retrieve(keys[:2], top_k=3)
 
-        assert retrieved.shape[0] == 2
-        assert retrieved.shape[2] == 64
+        # retrieve returns [B, d_value] - weighted sum of top-k
+        assert retrieved.shape == (2, 64)
 
     def test_ltm_empty_retrieve(self):
         cfg = LTMConfig(d_key=64, d_value=64, use_faiss=False)
