@@ -50,6 +50,9 @@ class SSMCompressedMirasTitans(nn.Module):
         use_huber: bool = True,
         huber_delta: float = 1.0,
         init_scale: float = 0.1,
+        grad_clip: float = 1.0,
+        use_ema: bool = False,
+        ema_decay: float = 0.99,
     ):
         super().__init__()
         self.d_model = d_model
@@ -59,6 +62,9 @@ class SSMCompressedMirasTitans(nn.Module):
         self.momentum = momentum
         self.use_huber = use_huber
         self.huber_delta = huber_delta
+        self.grad_clip = grad_clip
+        self.use_ema = use_ema
+        self.ema_decay = ema_decay
 
         # Low-rank factors B, C and diagonal D
         self.B = nn.Parameter(torch.zeros(d_model, rank))
@@ -75,6 +81,11 @@ class SSMCompressedMirasTitans(nn.Module):
         # Momentum buffers
         self.register_buffer("S_B", torch.zeros_like(self.B))
         self.register_buffer("S_C", torch.zeros_like(self.C))
+
+        # EMA shadow parameters
+        if use_ema:
+            self.register_buffer("ema_B", self.B.data.clone())
+            self.register_buffer("ema_C", self.C.data.clone())
 
         # Retention gate: learns when to forget vs retain
         self.retention_gate = nn.Sequential(
@@ -151,6 +162,15 @@ class SSMCompressedMirasTitans(nn.Module):
         gradB = gradW @ self.C
         gradC = gradW.t() @ self.B
 
+        # Gradient clipping
+        if self.grad_clip > 0:
+            gradB_norm = gradB.norm()
+            gradC_norm = gradC.norm()
+            if gradB_norm > self.grad_clip:
+                gradB = gradB * (self.grad_clip / (gradB_norm + 1e-8))
+            if gradC_norm > self.grad_clip:
+                gradC = gradC * (self.grad_clip / (gradC_norm + 1e-8))
+
         # Momentum update
         self.S_B = self.momentum * self.S_B - self.lr * gradB
         self.S_C = self.momentum * self.S_C - self.lr * gradC
@@ -163,12 +183,19 @@ class SSMCompressedMirasTitans(nn.Module):
         self.B.data = (1.0 - alpha_t) * self.B.data + self.S_B
         self.C.data = (1.0 - alpha_t) * self.C.data + self.S_C
 
+        # EMA update of shadow parameters
+        if self.use_ema:
+            self.ema_B = self.ema_decay * self.ema_B + (1 - self.ema_decay) * self.B.data
+            self.ema_C = self.ema_decay * self.ema_C + (1 - self.ema_decay) * self.C.data
+
         stats = {
             "B_norm": float(self.B.data.norm().item()),
             "C_norm": float(self.C.data.norm().item()),
             "S_B_norm": float(self.S_B.norm().item()),
             "S_C_norm": float(self.S_C.norm().item()),
-            "retention_gate": float(alpha_t.mean().item()) if alpha_t.dim() > 0 else float(alpha_t.item()),
+            "gradB_norm": float(gradB.norm().item()),
+            "gradC_norm": float(gradC.norm().item()),
+            "retention": float(alpha_t.mean().item()) if alpha_t.dim() > 0 else float(alpha_t.item()),
             "err_l2": float(err.norm(dim=-1).mean().item()),
         }
         return stats
@@ -205,12 +232,14 @@ class SSMCompressedMiras(nn.Module):
         lr: float = 1e-3,
         l2_reg: float = 1e-4,
         init_scale: float = 0.1,
+        grad_clip: float = 1.0,
     ):
         super().__init__()
         self.d_model = d_model
         self.rank = rank
         self.lr = lr
         self.l2_reg = l2_reg
+        self.grad_clip = grad_clip
 
         # Low-rank factors
         self.B = nn.Parameter(torch.zeros(d_model, rank))
@@ -261,11 +290,21 @@ class SSMCompressedMiras(nn.Module):
                 weight = weight.unsqueeze(-1)
             err = err * weight.to(W.device)
 
-        # Compute and apply gradients directly (SGD)
+        # Compute gradients
         gradW = -(err.t() @ k) / (batch_size + 1e-8) + self.l2_reg * W
         gradB = gradW @ self.C
         gradC = gradW.t() @ self.B
 
+        # Gradient clipping
+        if self.grad_clip > 0:
+            gradB_norm = gradB.norm()
+            gradC_norm = gradC.norm()
+            if gradB_norm > self.grad_clip:
+                gradB = gradB * (self.grad_clip / (gradB_norm + 1e-8))
+            if gradC_norm > self.grad_clip:
+                gradC = gradC * (self.grad_clip / (gradC_norm + 1e-8))
+
+        # Apply SGD update
         self.B.data.add_(-self.lr * gradB)
         self.C.data.add_(-self.lr * gradC)
 

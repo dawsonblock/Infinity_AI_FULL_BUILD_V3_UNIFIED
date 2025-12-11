@@ -41,6 +41,27 @@ except ImportError:
         HAS_MAMBA = False
 
 
+class DropPath(nn.Module):
+    """
+    Stochastic Depth (DropPath) for regularization.
+
+    Randomly drops entire residual branches during training.
+    """
+
+    def __init__(self, drop_prob: float = 0.0):
+        super().__init__()
+        self.drop_prob = drop_prob
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        if self.drop_prob == 0.0 or not self.training:
+            return x
+        keep_prob = 1.0 - self.drop_prob
+        shape = (x.shape[0],) + (1,) * (x.ndim - 1)
+        random_tensor = keep_prob + torch.rand(shape, dtype=x.dtype, device=x.device)
+        random_tensor.floor_()
+        return x.div(keep_prob) * random_tensor
+
+
 class MLPBackbone(nn.Module):
     """
     Simple MLP backbone for non-sequential RL tasks.
@@ -134,10 +155,10 @@ class Mamba2Block(nn.Module):
 
 class AttentionBlock(nn.Module):
     """
-    Standard Transformer attention block with pre-norm.
+    Standard Transformer attention block with pre-norm and optional DropPath.
 
-    Structure: x -> LayerNorm -> MultiHeadAttention -> + x
-                 -> LayerNorm -> FFN -> + x
+    Structure: x -> LayerNorm -> MultiHeadAttention -> DropPath -> + x
+                 -> LayerNorm -> FFN -> DropPath -> + x
     """
 
     def __init__(
@@ -146,6 +167,7 @@ class AttentionBlock(nn.Module):
         n_heads: int = 4,
         dropout: float = 0.1,
         ffn_mult: int = 4,
+        drop_path: float = 0.0,
     ):
         super().__init__()
         self.norm1 = nn.LayerNorm(d_model)
@@ -155,6 +177,7 @@ class AttentionBlock(nn.Module):
             dropout=dropout,
             batch_first=True,
         )
+        self.drop_path1 = DropPath(drop_path) if drop_path > 0 else nn.Identity()
         self.norm2 = nn.LayerNorm(d_model)
         self.ffn = nn.Sequential(
             nn.Linear(d_model, d_model * ffn_mult),
@@ -163,6 +186,7 @@ class AttentionBlock(nn.Module):
             nn.Linear(d_model * ffn_mult, d_model),
             nn.Dropout(dropout),
         )
+        self.drop_path2 = DropPath(drop_path) if drop_path > 0 else nn.Identity()
 
     def forward(
         self,
@@ -176,17 +200,17 @@ class AttentionBlock(nn.Module):
         Returns:
             [B, T, d_model]
         """
-        # Self-attention with residual
+        # Self-attention with residual + drop_path
         residual = x
         x = self.norm1(x)
         x, _ = self.attn(x, x, x, attn_mask=attn_mask, need_weights=False)
-        x = residual + x
+        x = residual + self.drop_path1(x)
 
-        # FFN with residual
+        # FFN with residual + drop_path
         residual = x
         x = self.norm2(x)
         x = self.ffn(x)
-        x = residual + x
+        x = residual + self.drop_path2(x)
 
         return x
 
@@ -222,14 +246,18 @@ class HybridSSMAttentionBackbone(nn.Module):
                     expand=cfg.mamba_expand,
                 ))
 
-        # Build Attention layers
+        # Build Attention layers with optional DropPath
         self.attention_layers = nn.ModuleList()
         if use_attention:
-            for _ in range(cfg.num_attention_layers):
+            # Stochastic depth: linearly increase drop rate
+            drop_rate = cfg.drop_path_rate if cfg.use_drop_path else 0.0
+            for i in range(cfg.num_attention_layers):
+                layer_drop = drop_rate * i / max(cfg.num_attention_layers - 1, 1)
                 self.attention_layers.append(AttentionBlock(
                     d_model=cfg.d_model,
                     n_heads=cfg.n_heads,
                     dropout=cfg.dropout,
+                    drop_path=layer_drop,
                 ))
 
         # If neither available, use MLP fallback

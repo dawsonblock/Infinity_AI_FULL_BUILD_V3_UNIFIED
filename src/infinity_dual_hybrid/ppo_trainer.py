@@ -103,14 +103,19 @@ class PPOTrainer:
             lr=cfg.learning_rate,
             weight_decay=cfg.weight_decay,
         )
+        self.current_lr = cfg.learning_rate
 
         # Optional: old policy for KL penalty
         self._old_policy_params = None
         if cfg.use_kl_penalty:
             self._store_old_policy()
 
+        # v2.0: Adaptive KL target
+        self.kl_coef = cfg.kl_coef
+
         # Stats tracking
         self.iteration = 0
+        self.grad_explosion_count = 0
 
     def _store_old_policy(self) -> None:
         """Store copy of policy parameters for KL penalty."""
@@ -279,6 +284,7 @@ class PPOTrainer:
         total_value_loss = 0.0
         total_entropy = 0.0
         total_kl = 0.0
+        total_grad_norm = 0.0
         num_updates = 0
 
         for epoch in range(cfg.train_epochs):
@@ -321,16 +327,37 @@ class PPOTrainer:
                     - cfg.entropy_coef * entropy_loss
                 )
 
-                # Optional KL penalty
+                # Optional KL penalty with adaptive coefficient
                 if cfg.use_kl_penalty:
                     kl = (mb_old_logp - new_logp).mean()
-                    loss = loss + cfg.kl_coef * kl
+                    loss = loss + self.kl_coef * kl
                     total_kl += kl.item()
 
                 # Optimize
                 self.optimizer.zero_grad()
                 loss.backward()
-                nn.utils.clip_grad_norm_(self.agent.parameters(), cfg.max_grad_norm)
+
+                # Track gradient norm before clipping
+                grad_norm = 0.0
+                if cfg.track_grad_norm:
+                    for p in self.agent.parameters():
+                        if p.grad is not None:
+                            grad_norm += p.grad.data.norm(2).item() ** 2
+                    grad_norm = grad_norm ** 0.5
+                    total_grad_norm += grad_norm
+
+                # Gradient explosion detection and LR reduction
+                if grad_norm > cfg.grad_explosion_threshold:
+                    self.grad_explosion_count += 1
+                    if self.grad_explosion_count >= 3:
+                        self.current_lr *= cfg.lr_reduce_factor
+                        for pg in self.optimizer.param_groups:
+                            pg['lr'] = self.current_lr
+                        self.grad_explosion_count = 0
+
+                nn.utils.clip_grad_norm_(
+                    self.agent.parameters(), cfg.max_grad_norm
+                )
                 self.optimizer.step()
 
                 # Accumulate stats
@@ -338,6 +365,15 @@ class PPOTrainer:
                 total_value_loss += value_loss.item()
                 total_entropy += entropy_loss.item()
                 num_updates += 1
+
+        # Adaptive KL coefficient adjustment
+        if cfg.use_kl_penalty and cfg.adaptive_kl:
+            avg_kl = total_kl / max(num_updates, 1)
+            if avg_kl > cfg.kl_target * cfg.kl_adapt_coef:
+                self.kl_coef *= 1.5
+            elif avg_kl < cfg.kl_target / cfg.kl_adapt_coef:
+                self.kl_coef *= 0.5
+            self.kl_coef = max(0.0001, min(self.kl_coef, 10.0))
 
         # Update old policy if using KL
         if cfg.use_kl_penalty:
@@ -350,6 +386,9 @@ class PPOTrainer:
             "value_loss": total_value_loss / num_updates,
             "entropy": total_entropy / num_updates,
             "kl": total_kl / max(num_updates, 1),
+            "grad_norm": total_grad_norm / max(num_updates, 1),
+            "learning_rate": self.current_lr,
+            "kl_coef": self.kl_coef,
             "mean_reward": rollouts.rewards.mean().item(),
             "mean_return": rollouts.returns.mean().item(),
             "mean_advantage": rollouts.advantages.mean().item(),
