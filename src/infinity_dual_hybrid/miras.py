@@ -491,6 +491,23 @@ class DualTierMiras(nn.Module):
         """Alias for reset_state() - resets memory without resetting learned params."""
         self.reset_state()
 
+    def get_stats(self) -> Dict[str, float]:
+        """Get current statistics for diagnostics."""
+        w_fast = self.compute_mix(None)
+        if w_fast.dim() > 0:
+            mix_ratio = float(w_fast.mean().item())
+        else:
+            mix_ratio = float(w_fast.item())
+
+        return {
+            "fast_B_norm": float(self.fast_mem.B.data.norm().item()),
+            "fast_C_norm": float(self.fast_mem.C.data.norm().item()),
+            "deep_B_norm": float(self.deep_mem.B.data.norm().item()),
+            "deep_C_norm": float(self.deep_mem.C.data.norm().item()),
+            "mix_ratio": mix_ratio,
+            "mix_logit": float(self.mix_logit.data.item()),
+        }
+
     def reset_parameters(self) -> None:
         """Full parameter reset."""
         self.fast_mem.reset_parameters()

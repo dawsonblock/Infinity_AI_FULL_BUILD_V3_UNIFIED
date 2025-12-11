@@ -32,7 +32,7 @@ Memory Updates (during training):
     - LTM.store() for high-importance states (RMD-gated or episode-end)
 """
 
-from typing import Optional, Dict, Tuple
+from typing import Optional, Dict, Tuple, Any
 
 import torch
 import torch.nn as nn
@@ -195,6 +195,62 @@ class InfinityV3DualHybridAgent(nn.Module):
         # Buffer for episode tracking
         self._episode_states: list = []
 
+        # v2.0: Runtime state
+        self._mode = cfg.mode  # "train", "eval", "inference"
+        self._temperature = cfg.temperature
+
+    def set_mode(self, mode: str) -> None:
+        """Set agent mode: 'train', 'eval', or 'inference'."""
+        assert mode in ("train", "eval", "inference")
+        self._mode = mode
+
+    def set_temperature(self, t: float) -> None:
+        """Set policy temperature for action sampling."""
+        self._temperature = t
+
+    def debug_state(self) -> Dict[str, Any]:
+        """
+        Return diagnostic state for debugging and logging.
+
+        Returns:
+            Dict with backbone, Miras, and LTM state info
+        """
+        state = {
+            "mode": self._mode,
+            "temperature": self._temperature,
+            "episode_buffer_size": len(self._episode_states),
+        }
+
+        # Backbone info
+        state["backbone"] = {
+            "has_mamba": len(self.backbone.mamba_layers) > 0,
+            "has_attention": len(self.backbone.attention_layers) > 0,
+            "d_model": self.backbone.d_model,
+        }
+
+        # Miras info
+        if self.miras is not None:
+            miras_stats = self.miras.get_stats()
+            state["miras"] = {
+                "fast_B_norm": miras_stats.get("fast_B_norm", 0),
+                "fast_C_norm": miras_stats.get("fast_C_norm", 0),
+                "deep_B_norm": miras_stats.get("deep_B_norm", 0),
+                "deep_C_norm": miras_stats.get("deep_C_norm", 0),
+                "mix_ratio": miras_stats.get("mix_ratio", 0),
+            }
+        else:
+            state["miras"] = None
+
+        # LTM info
+        if self.ltm is not None:
+            state["ltm"] = {
+                "size": self.ltm.size,
+            }
+        else:
+            state["ltm"] = None
+
+        return state
+
     def forward(
         self,
         obs: torch.Tensor,
@@ -237,8 +293,8 @@ class InfinityV3DualHybridAgent(nn.Module):
         logits = self.policy_head(fused)
         value = self.value_head(fused).squeeze(-1)
 
-        # Memory updates during training
-        if self.training:
+        # Memory updates only in train mode
+        if self.training and self._mode == "train":
             self._update_memories(
                 encoded=encoded,
                 advantage=advantage,
@@ -347,7 +403,9 @@ class InfinityV3DualHybridAgent(nn.Module):
             action = torch.argmax(logits, dim=-1)
             log_prob = torch.zeros_like(value)
         else:
-            dist = torch.distributions.Categorical(logits=logits)
+            # Apply temperature scaling
+            scaled_logits = logits / max(self._temperature, 1e-8)
+            dist = torch.distributions.Categorical(logits=scaled_logits)
             action = dist.sample()
             log_prob = dist.log_prob(action)
 
