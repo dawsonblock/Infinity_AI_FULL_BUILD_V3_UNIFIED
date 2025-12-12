@@ -64,7 +64,7 @@ class LTMConfig:
 
     # Storage policy
     store_on_episode_end: bool = True
-    store_high_reward_threshold: Optional[float] = None  # If set, store transitions with reward > threshold
+    store_high_reward_threshold: Optional[float] = None
 
 
 @dataclass
@@ -235,5 +235,13 @@ def get_config_for_env(env_id: str) -> TrainConfig:
         cfg.agent.obs_dim = 3
         cfg.agent.act_dim = 1  # Continuous - will need different head
         cfg.agent.hidden_dim = 128
+
+    elif env_id in ("DelayedCue-v0", "DelayedCueRegime-v0"):
+        cfg.agent.obs_dim = 5
+        cfg.agent.act_dim = 2
+        cfg.agent.hidden_dim = 256
+        cfg.ppo.steps_per_rollout = 4096
+        cfg.ppo.gamma = 0.999
+        cfg.ppo.gae_lambda = 0.97
 
     return cfg

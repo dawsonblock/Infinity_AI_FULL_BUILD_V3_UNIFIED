@@ -16,12 +16,8 @@ try:
     import gymnasium as gym
     HAS_GYM = True
 except ImportError:
-    try:
-        import gym
-        HAS_GYM = True
-    except ImportError:
-        gym = None
-        HAS_GYM = False
+    gym = None
+    HAS_GYM = False
 
 
 if HAS_GYM:
@@ -106,6 +102,8 @@ def make_env(env_id: str) -> Any:
         )
     if env_id == "DelayedCue-v0":
         return DelayedCueEnv()
+    if env_id == "DelayedCueRegime-v0":
+        return DelayedCueEnv(regime_shift=True)
     return gym.make(env_id)
 
 
