@@ -3,9 +3,6 @@
 Tests for Dual-Tier Miras memory system.
 """
 
-import sys
-sys.path.insert(0, "src")
-
 import torch
 import pytest
 

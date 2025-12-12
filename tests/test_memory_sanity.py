@@ -3,9 +3,6 @@
 Sanity tests for memory systems (Miras + LTM).
 """
 
-import sys
-sys.path.insert(0, "src")
-
 import torch
 import pytest
 
@@ -40,7 +37,6 @@ class TestMirasSanity:
         miras = DualTierMiras.from_config(cfg)
 
         k = torch.randn(2, 32, requires_grad=True)
-        v = torch.randn(2, 32)
 
         out = miras.read(k)
         loss = out["v"].sum()

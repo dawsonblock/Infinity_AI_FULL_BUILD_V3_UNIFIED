@@ -9,7 +9,7 @@ A production-grade, research-ready RL framework combining:
 - Unified logging (CSV, JSONL, TensorBoard)
 """
 
-__version__ = "2.0.0"
+__version__ = "2.0.1"
 
 from .config import (
     TrainConfig,

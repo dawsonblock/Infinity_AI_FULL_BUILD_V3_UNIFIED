@@ -27,6 +27,7 @@ from .config import TrainConfig, get_config_for_env
 from .agent import InfinityV3DualHybridAgent
 from .ppo_trainer import PPOTrainer
 from .envs import make_envs, get_env_info
+from .logger import create_logger
 
 
 def set_seed(seed: Optional[int]) -> None:
@@ -89,46 +90,98 @@ def train(cfg: TrainConfig) -> InfinityV3DualHybridAgent:
     start_time = time.time()
     best_eval_reward = float("-inf")
 
-    for iteration in range(1, cfg.ppo.max_iterations + 1):
-        iter_start = time.time()
+    with create_logger() as logger:
+        for iteration in range(1, cfg.ppo.max_iterations + 1):
+            iter_start = time.time()
 
-        # Collect rollouts
-        rollouts = trainer.collect_rollouts(envs)
+            # Collect rollouts
+            rollouts = trainer.collect_rollouts(envs)
 
-        # Train
-        train_stats = trainer.train_step(rollouts)
+            # Train
+            train_stats = trainer.train_step(rollouts)
 
-        # Evaluate
-        eval_stats = {}
-        if iteration % cfg.ppo.eval_interval == 0:
-            eval_stats = trainer.evaluate(envs, num_episodes=cfg.ppo.eval_episodes)
+            # Evaluate
+            eval_stats = {}
+            if iteration % cfg.ppo.eval_interval == 0:
+                eval_stats = trainer.evaluate(
+                    envs,
+                    num_episodes=cfg.ppo.eval_episodes,
+                )
 
-            # Track best
-            if eval_stats["eval_mean_reward"] > best_eval_reward:
-                best_eval_reward = eval_stats["eval_mean_reward"]
-                if cfg.save_path:
-                    trainer.save(os.path.join(cfg.save_path, "best_model.pt"))
+                # Track best
+                if eval_stats["eval_mean_reward"] > best_eval_reward:
+                    best_eval_reward = eval_stats["eval_mean_reward"]
+                    if cfg.save_path:
+                        trainer.save(
+                            os.path.join(cfg.save_path, "best_model.pt")
+                        )
 
-        # Log
-        if iteration % cfg.log_interval == 0:
-            iter_time = time.time() - iter_start
+            # Log
+            if iteration % cfg.log_interval == 0:
+                iter_time = time.time() - iter_start
 
-            log_str = (
-                f"[Iter {iteration:4d}/{cfg.ppo.max_iterations}] "
-                f"policy_loss={train_stats['policy_loss']:.4f} "
-                f"value_loss={train_stats['value_loss']:.4f} "
-                f"entropy={train_stats['entropy']:.4f} "
-                f"mean_rew={train_stats['mean_reward']:.2f}"
-            )
-            if eval_stats:
-                log_str += f" | eval={eval_stats['eval_mean_reward']:.2f}"
-            log_str += f" | time={iter_time:.2f}s"
+                dbg = agent.debug_state()
+                miras_dbg = dbg.get("miras")
+                ltm_dbg = dbg.get("ltm")
+                backbone_dbg = dbg.get("backbone")
 
-            print(log_str)
+                metrics = {
+                    "iteration_time": iter_time,
+                    "reward_std": float(rollouts.rewards.std().item()),
+                    "return_std": float(rollouts.returns.std().item()),
+                    "eval_mean_reward": None,
+                    "eval_std_reward": None,
+                    "eval_mean_length": None,
+                    "mode": dbg.get("mode"),
+                    "temperature": dbg.get("temperature"),
+                    "backbone_has_mamba": (
+                        backbone_dbg.get("has_mamba") if backbone_dbg else None
+                    ),
+                    "backbone_has_attention": (
+                        backbone_dbg.get("has_attention")
+                        if backbone_dbg
+                        else None
+                    ),
+                    "miras_fast_B_norm": (
+                        miras_dbg.get("fast_B_norm") if miras_dbg else None
+                    ),
+                    "miras_fast_C_norm": (
+                        miras_dbg.get("fast_C_norm") if miras_dbg else None
+                    ),
+                    "miras_deep_B_norm": (
+                        miras_dbg.get("deep_B_norm") if miras_dbg else None
+                    ),
+                    "miras_deep_C_norm": (
+                        miras_dbg.get("deep_C_norm") if miras_dbg else None
+                    ),
+                    "miras_mix_ratio": (
+                        miras_dbg.get("mix_ratio") if miras_dbg else None
+                    ),
+                    "ltm_size": (ltm_dbg.get("size") if ltm_dbg else 0),
+                    **train_stats,
+                    **eval_stats,
+                }
 
-        # Save checkpoint
-        if cfg.save_path and iteration % cfg.save_interval == 0:
-            trainer.save(os.path.join(cfg.save_path, f"checkpoint_{iteration}.pt"))
+                logger.log(metrics, step=iteration)
+
+                log_str = (
+                    f"[Iter {iteration:4d}/{cfg.ppo.max_iterations}] "
+                    f"policy_loss={train_stats['policy_loss']:.4f} "
+                    f"value_loss={train_stats['value_loss']:.4f} "
+                    f"entropy={train_stats['entropy']:.4f} "
+                    f"mean_rew={train_stats['mean_reward']:.2f}"
+                )
+                if eval_stats:
+                    log_str += f" | eval={eval_stats['eval_mean_reward']:.2f}"
+                log_str += f" | time={iter_time:.2f}s"
+
+                print(log_str)
+
+            # Save checkpoint
+            if cfg.save_path and iteration % cfg.save_interval == 0:
+                trainer.save(
+                    os.path.join(cfg.save_path, f"checkpoint_{iteration}.pt")
+                )
 
     # Final save
     if cfg.save_path:
@@ -279,12 +332,19 @@ def quick_test():
 
     # Create agent
     agent = InfinityV3DualHybridAgent(cfg.agent)
-    print(f"Agent created with {sum(p.numel() for p in agent.parameters()):,} params")
+    num_params = sum(p.numel() for p in agent.parameters())
+    print(
+        f"Agent created with {num_params:,} params"
+    )
 
     # Dummy forward pass
     obs = torch.randn(4, 4)  # [B=4, obs_dim=4]
     out = agent(obs)
-    print(f"Forward pass: logits={out['logits'].shape}, value={out['value'].shape}")
+    logits_shape = out["logits"].shape
+    value_shape = out["value"].shape
+    print(
+        f"Forward pass: logits={logits_shape}, value={value_shape}"
+    )
 
     # Dummy optimization step
     optimizer = torch.optim.Adam(agent.parameters(), lr=1e-3)

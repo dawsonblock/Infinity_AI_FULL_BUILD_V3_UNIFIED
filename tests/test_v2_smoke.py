@@ -3,10 +3,6 @@
 v2.0 Smoke Tests - End-to-end PPO training sanity checks.
 """
 
-import sys
-sys.path.insert(0, "src")
-sys.path.insert(0, "vendor")
-
 import torch
 import pytest
 

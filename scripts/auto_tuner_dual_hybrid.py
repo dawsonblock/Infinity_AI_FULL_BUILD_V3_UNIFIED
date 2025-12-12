@@ -5,9 +5,6 @@ Simple auto-tuner for Infinity Dual Hybrid.
 Scans configurations to find good hyperparameters.
 """
 
-import sys
-sys.path.insert(0, "src")
-
 import itertools
 from copy import deepcopy
 
@@ -28,7 +25,7 @@ def run_trial(base_cfg, hidden_dim, use_miras, use_attention, num_iters=10):
 
     envs = make_envs(cfg.env_id, num_envs=1)
     agent = InfinityV3DualHybridAgent(cfg.agent).to(cfg.device)
-    trainer = PPOTrainer(agent, cfg.ppo)
+    trainer = PPOTrainer(agent, cfg.ppo, device=cfg.device)
 
     best_return = -1e9
     for it in range(num_iters):
@@ -39,6 +36,7 @@ def run_trial(base_cfg, hidden_dim, use_miras, use_attention, num_iters=10):
 
     for env in envs:
         env.close()
+    agent.shutdown()
     return best_return
 
 
@@ -58,7 +56,10 @@ def main():
     for hidden, miras, attn in itertools.product(
         hidden_dims, use_miras_opts, use_attention_opts
     ):
-        print(f"Testing: hidden={hidden}, miras={miras}, attn={attn}...", end=" ")
+        print(
+            f"Testing: hidden={hidden}, miras={miras}, attn={attn}...",
+            end=" ",
+        )
         score = run_trial(base_cfg, hidden, miras, attn, num_iters=15)
         results.append((hidden, miras, attn, score))
         print(f"score={score:.2f}")
@@ -70,7 +71,10 @@ def main():
     print("Results (sorted by score)")
     print("=" * 60)
     for hidden, miras, attn, score in results:
-        print(f"hidden={hidden:3d} miras={str(miras):5s} attn={str(attn):5s} -> {score:.2f}")
+        print(
+            f"hidden={hidden:3d} miras={str(miras):5s} attn={str(attn):5s} "
+            f"-> {score:.2f}"
+        )
 
     best = results[0]
     print(f"\nBest config: hidden={best[0]}, miras={best[1]}, attn={best[2]}")

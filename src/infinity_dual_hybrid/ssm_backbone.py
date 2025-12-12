@@ -23,22 +23,16 @@ import torch.nn as nn
 
 from .config import BackboneConfig
 
-# Optional Mamba2 import - try vendor path first, then system
+# Optional Mamba2 import - vendored (vendor/mamba_ssm) or system-installed
 HAS_MAMBA = False
 Mamba2 = None
 
 try:
-    # Try vendor path (when running from repo root with vendor/ in path)
-    from vendor.mamba_ssm.modules.mamba2 import Mamba2
+    from mamba_ssm.modules.mamba2 import Mamba2
     HAS_MAMBA = True
 except ImportError:
-    try:
-        # Try system-installed mamba_ssm
-        from mamba_ssm.modules.mamba2 import Mamba2
-        HAS_MAMBA = True
-    except ImportError:
-        Mamba2 = None
-        HAS_MAMBA = False
+    Mamba2 = None
+    HAS_MAMBA = False
 
 
 class DropPath(nn.Module):

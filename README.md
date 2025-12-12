@@ -70,8 +70,11 @@ pip install -e .
 # Run from repo root
 cd INFINITY_DUAL_HYBRID_LEAN
 
+# Install as package (recommended)
+pip install -e .
+
 # Quick sanity test
-python -c "import sys; sys.path.insert(0, 'src'); from infinity_dual_hybrid.train import quick_test; quick_test()"
+python -m infinity_dual_hybrid.train --test
 
 # Train baseline (no memory)
 python scripts/train_cartpole_baseline.py
@@ -86,9 +89,6 @@ python scripts/auto_tuner_dual_hybrid.py
 ### Python API
 
 ```python
-import sys
-sys.path.insert(0, "src")
-
 from infinity_dual_hybrid import (
     get_config_for_env,
     build_agent,
@@ -115,7 +115,9 @@ for i in range(100):
     stats = trainer.train_step(rollouts)
     print(f"Iter {i}: reward={stats['mean_reward']:.2f}")
 
-envs.close()
+for env in envs:
+    env.close()
+agent.shutdown()
 ```
 
 ## Configuration

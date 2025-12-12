@@ -53,7 +53,12 @@ class MemoryFusion(nn.Module):
     Concatenates [encoded, miras_v, ltm_v] and projects to d_model.
     """
 
-    def __init__(self, d_model: int, use_miras: bool = True, use_ltm: bool = True):
+    def __init__(
+        self,
+        d_model: int,
+        use_miras: bool = True,
+        use_ltm: bool = True,
+    ):
         super().__init__()
         self.use_miras = use_miras
         self.use_ltm = use_ltm
@@ -273,6 +278,9 @@ class InfinityV3DualHybridAgent(nn.Module):
         # Pass through backbone
         encoded = self.backbone(x)  # [B, d_model]
 
+        if store_for_ltm and self.ltm is not None and self._mode == "train":
+            self._episode_states.append(encoded.detach().cpu())
+
         # Miras read
         miras_v = None
         if self.miras is not None:
@@ -327,11 +335,12 @@ class InfinityV3DualHybridAgent(nn.Module):
                 if weight.dim() == 1:
                     weight = weight  # [B]
 
-            self.miras.update(miras_k, miras_target, weight=weight, context=encoded)
-
-        # Buffer states for LTM (stored at episode end or high-importance)
-        if store_for_ltm and self.ltm is not None:
-            self._episode_states.append(encoded.detach().cpu())
+            self.miras.update(
+                miras_k,
+                miras_target,
+                weight=weight,
+                context=encoded,
+            )
 
     def commit_to_ltm(
         self,
@@ -344,6 +353,9 @@ class InfinityV3DualHybridAgent(nn.Module):
         Called at episode boundaries or when force=True.
         Uses RMD gate to select top-k% important states.
         """
+        if not force and self._mode != "train":
+            return
+
         if self.ltm is None or not self._episode_states:
             return
 
@@ -385,6 +397,7 @@ class InfinityV3DualHybridAgent(nn.Module):
         self,
         obs: torch.Tensor,
         deterministic: bool = False,
+        store_for_ltm: bool = False,
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         Get action from policy.
@@ -395,7 +408,7 @@ class InfinityV3DualHybridAgent(nn.Module):
         Returns:
             (action, log_prob, value)
         """
-        out = self.forward(obs)
+        out = self.forward(obs, store_for_ltm=store_for_ltm)
         logits = out["logits"]
         value = out["value"]
 
@@ -453,7 +466,11 @@ class InfinityV3DualHybridAgent(nn.Module):
         torch.save(state, path)
 
     @classmethod
-    def load(cls, path: str, device: str = "cpu") -> "InfinityV3DualHybridAgent":
+    def load(
+        cls,
+        path: str,
+        device: str = "cpu",
+    ) -> "InfinityV3DualHybridAgent":
         """Load agent from checkpoint."""
         state = torch.load(path, map_location=device)
         agent = cls(state["config"])

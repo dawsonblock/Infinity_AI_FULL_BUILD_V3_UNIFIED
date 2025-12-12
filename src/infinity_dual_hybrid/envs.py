@@ -13,11 +13,11 @@ from typing import List, Tuple, Any
 import numpy as np
 
 try:
-    import gym
+    import gymnasium as gym
     HAS_GYM = True
 except ImportError:
     try:
-        import gymnasium as gym
+        import gym
         HAS_GYM = True
     except ImportError:
         gym = None
@@ -86,7 +86,11 @@ class RunningMeanStd:
         new_mean = self.mean + delta * batch_count / tot_count
         m_a = self.var * self.count
         m_b = batch_var * batch_count
-        M2 = m_a + m_b + np.square(delta) * self.count * batch_count / tot_count
+        M2 = (
+            m_a
+            + m_b
+            + np.square(delta) * self.count * batch_count / tot_count
+        )
         new_var = M2 / tot_count
 
         self.mean = new_mean
@@ -140,7 +144,9 @@ class NormalizedObservationWrapper:
     def _normalize(self, obs: np.ndarray) -> np.ndarray:
         """Normalize observation using running statistics."""
         self.obs_rms.update(obs.reshape(1, -1))
-        normalized = (obs - self.obs_rms.mean) / np.sqrt(self.obs_rms.var + 1e-8)
+        normalized = (obs - self.obs_rms.mean) / np.sqrt(
+            self.obs_rms.var + 1e-8
+        )
         return np.clip(normalized, -self.clip, self.clip).astype(np.float32)
 
     def close(self):
@@ -240,7 +246,11 @@ def get_env_info(env_id: str) -> dict:
     # Get observation dimension
     obs_space = env.observation_space
     if hasattr(obs_space, 'shape'):
-        obs_dim = obs_space.shape[0] if len(obs_space.shape) == 1 else obs_space.shape
+        obs_dim = (
+            obs_space.shape[0]
+            if len(obs_space.shape) == 1
+            else obs_space.shape
+        )
     else:
         obs_dim = obs_space.n
 

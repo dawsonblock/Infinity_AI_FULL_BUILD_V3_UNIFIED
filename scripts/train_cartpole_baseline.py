@@ -6,9 +6,6 @@ This script trains a pure backbone agent (no Miras, no LTM)
 for comparison against memory-augmented variants.
 """
 
-import sys
-sys.path.insert(0, "src")
-
 from infinity_dual_hybrid.config import get_config_for_env
 from infinity_dual_hybrid.agent import InfinityV3DualHybridAgent
 from infinity_dual_hybrid.ppo_trainer import PPOTrainer
@@ -25,7 +22,7 @@ def main():
 
     envs = make_envs(cfg.env_id, num_envs=1)
     agent = InfinityV3DualHybridAgent(cfg.agent).to(cfg.device)
-    trainer = PPOTrainer(agent, cfg.ppo)
+    trainer = PPOTrainer(agent, cfg.ppo, device=cfg.device)
 
     print("=" * 50)
     print("Baseline CartPole Training (No Memory)")
@@ -49,6 +46,7 @@ def main():
 
     for env in envs:
         env.close()
+    agent.shutdown()
     print("Training complete.")
 
 

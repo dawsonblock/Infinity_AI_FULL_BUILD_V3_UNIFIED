@@ -68,7 +68,11 @@ def compute_gae(
     gae = 0.0
     for t in reversed(range(T)):
         next_non_terminal = 1.0 - dones[t]
-        delta = rewards[t] + gamma * values[t + 1] * next_non_terminal - values[t]
+        delta = (
+            rewards[t]
+            + gamma * values[t + 1] * next_non_terminal
+            - values[t]
+        )
         gae = delta + gamma * gae_lambda * next_non_terminal * gae
         advantages[t] = gae
         returns[t] = gae + values[t]
@@ -158,6 +162,10 @@ class PPOTrainer:
 
         self.agent.eval()
 
+        store_for_ltm = False
+        if self.agent.ltm is not None:
+            store_for_ltm = bool(self.agent.cfg.ltm.store_on_episode_end)
+
         for step in range(steps):
             # Convert to tensor
             obs_t = torch.tensor(
@@ -168,7 +176,10 @@ class PPOTrainer:
 
             # Get actions
             with torch.no_grad():
-                actions, log_probs, values = self.agent.get_action(obs_t)
+                actions, log_probs, values = self.agent.get_action(
+                    obs_t,
+                    store_for_ltm=store_for_ltm,
+                )
 
             # Step environments
             next_obs_list = []
@@ -193,7 +204,10 @@ class PPOTrainer:
                 if done_flag:
                     # Reset and commit LTM
                     reset_out = env.reset()
-                    next_obs = reset_out[0] if isinstance(reset_out, tuple) else reset_out
+                    if isinstance(reset_out, tuple):
+                        next_obs = reset_out[0]
+                    else:
+                        next_obs = reset_out
                     self.agent.commit_to_ltm()
                     self.agent.reset_episode()
 
@@ -216,7 +230,10 @@ class PPOTrainer:
 
         for env_idx in range(num_envs):
             # Extract this env's data
-            env_rewards = np.array(rew_buf[env_idx::num_envs], dtype=np.float32)
+            env_rewards = np.array(
+                rew_buf[env_idx::num_envs],
+                dtype=np.float32,
+            )
             env_values = np.array(
                 val_buf[env_idx::num_envs] + [last_values[env_idx].item()],
                 dtype=np.float32,
@@ -242,7 +259,9 @@ class PPOTrainer:
             returns[env_idx::num_envs] = all_returns[env_idx]
 
         # Normalize advantages
-        advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
+        advantages = (advantages - advantages.mean()) / (
+            advantages.std() + 1e-8
+        )
 
         # Create batch
         return RolloutBatch(
@@ -430,7 +449,10 @@ class PPOTrainer:
                 ).unsqueeze(0)
 
                 with torch.no_grad():
-                    action, _, _ = self.agent.get_action(obs_t, deterministic=deterministic)
+                    action, _, _ = self.agent.get_action(
+                        obs_t,
+                        deterministic=deterministic,
+                    )
 
                 step_out = env.step(action[0].item())
                 if len(step_out) == 5:
