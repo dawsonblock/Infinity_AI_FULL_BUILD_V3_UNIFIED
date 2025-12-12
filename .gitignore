@@ -34,6 +34,7 @@ env/
 # Testing
 .pytest_cache/
 .mypy_cache/
+.ruff_cache/
 .coverage
 htmlcov/
 
@@ -50,3 +51,4 @@ checkpoints/
 *.log
 wandb/
 runs/
+results/

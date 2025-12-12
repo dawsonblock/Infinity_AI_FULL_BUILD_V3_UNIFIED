@@ -60,6 +60,8 @@ Repository = "https://github.com/dawsonblock/INFINITY_DUAL_HYBRID"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+include = ["infinity_dual_hybrid*"]
+exclude = ["tests*", "legacy*", "vendor*"]
 
 [tool.setuptools.package-data]
 "*" = ["py.typed"]
