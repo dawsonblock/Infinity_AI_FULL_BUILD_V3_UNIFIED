@@ -10,7 +10,6 @@ Supports multiple backends:
 - Console logging
 """
 
-import os
 import csv
 import json
 import time

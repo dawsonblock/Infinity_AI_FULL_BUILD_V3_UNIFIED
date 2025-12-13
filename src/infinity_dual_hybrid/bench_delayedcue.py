@@ -58,9 +58,17 @@ def _write_run_commands(
         f"  --device {args.device} \\",
         f"  --train-iterations {args.train_iterations} \\",
         f"  --episodes {args.episodes} \\",
-        f"  --delays \"{args.delays}\"",
-        "",
     ]
+    if getattr(args, "use_ltm", False):
+        lines.append("  --use-ltm \\")
+    if getattr(args, "use_faiss", False):
+        lines.append("  --use-faiss \\")
+    lines.extend(
+        [
+            f"  --delays \"{args.delays}\"",
+            "",
+        ]
+    )
     with open(path, "w", encoding="utf-8") as f:
         f.write("\n".join(lines) + "\n")
     try:
@@ -84,6 +92,8 @@ def _run_train_for_env(
     iterations: int,
     device: str,
     seed: Optional[int],
+    use_ltm: bool = False,
+    use_faiss: bool = False,
 ) -> Tuple[InfinityV3DualHybridAgent, Dict[str, List[float]]]:
     cfg = get_config_for_env(env_id)
     for k, v in cfg_overrides.items():
@@ -93,6 +103,10 @@ def _run_train_for_env(
     cfg.seed = int(seed) if seed is not None else None
     cfg.ppo.max_iterations = iterations
     cfg.ppo.num_envs = 1
+
+    cfg.agent.use_ltm_in_forward = bool(use_ltm)
+    cfg.agent.ltm.use_faiss = bool(use_faiss)
+    cfg.agent.sync_dims()
 
     if cfg.seed is not None:
         set_seed(int(cfg.seed))
@@ -211,6 +225,8 @@ def run_delay_sweep(
     train_iterations: int,
     device: str,
     seed: Optional[int],
+    use_ltm: bool = False,
+    use_faiss: bool = False,
 ) -> Dict[str, Any]:
     _ensure_dir(out_dir)
 
@@ -231,6 +247,8 @@ def run_delay_sweep(
             iterations=train_iterations,
             device=device,
             seed=seed,
+            use_ltm=use_ltm,
+            use_faiss=use_faiss,
         )
 
         mean_rew, success_rate, mean_tts = _eval_success_rate(
@@ -290,6 +308,8 @@ def run_regime_shift_eval(
     train_iterations: int,
     device: str,
     seed: Optional[int],
+    use_ltm: bool = False,
+    use_faiss: bool = False,
 ) -> Dict[str, Any]:
     _ensure_dir(out_dir)
 
@@ -299,6 +319,8 @@ def run_regime_shift_eval(
         iterations=train_iterations,
         device=device,
         seed=seed,
+        use_ltm=use_ltm,
+        use_faiss=use_faiss,
     )
 
     cfg = get_config_for_env("DelayedCueRegime-v0")
@@ -381,7 +403,20 @@ def main() -> None:
     parser.add_argument("--episodes", type=int, default=50)
     parser.add_argument("--train-iterations", type=int, default=10)
     parser.add_argument("--device", type=str, default="cpu")
+    parser.add_argument(
+        "--use-ltm",
+        action="store_true",
+        default=False,
+    )
+    parser.add_argument(
+        "--use-faiss",
+        action="store_true",
+        default=False,
+    )
     args = parser.parse_args()
+
+    if args.use_faiss and not args.use_ltm:
+        args.use_ltm = True
 
     tag = _now_tag()
     out_dir = args.out or os.path.join("results", "bench_delayedcue", tag)
@@ -412,6 +447,8 @@ def main() -> None:
         train_iterations=args.train_iterations,
         device=args.device,
         seed=int(args.seed),
+        use_ltm=bool(args.use_ltm),
+        use_faiss=bool(args.use_faiss),
     )
 
     regime_metrics = run_regime_shift_eval(
@@ -420,6 +457,8 @@ def main() -> None:
         train_iterations=args.train_iterations,
         device=args.device,
         seed=int(args.seed),
+        use_ltm=bool(args.use_ltm),
+        use_faiss=bool(args.use_faiss),
     )
 
     _write_json(

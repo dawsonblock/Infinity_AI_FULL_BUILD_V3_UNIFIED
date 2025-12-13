@@ -73,8 +73,19 @@ def _ensure_dir(path: str) -> None:
 
 
 def _write_json(path: str, data) -> None:
+    def _json_default(o):
+        if isinstance(o, np.integer):
+            return int(o)
+        if isinstance(o, np.floating):
+            return float(o)
+        if isinstance(o, np.ndarray):
+            return o.tolist()
+        if isinstance(o, torch.Tensor):
+            return o.detach().cpu().tolist()
+        return str(o)
+
     with open(path, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2, sort_keys=True)
+        json.dump(data, f, indent=2, sort_keys=True, default=_json_default)
 
 
 def _write_run_commands(path: str) -> None:

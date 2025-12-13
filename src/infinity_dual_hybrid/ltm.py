@@ -24,13 +24,26 @@ import torch.nn.functional as F
 
 from .config import LTMConfig
 
-# Optional FAISS import
-try:
-    import faiss
+# Optional FAISS import (lazy)
+faiss = None
+HAS_FAISS = False
+_FAISS_IMPORT_ERROR: Optional[str] = None
+
+
+def _try_import_faiss() -> None:
+    global faiss, HAS_FAISS, _FAISS_IMPORT_ERROR
+    if HAS_FAISS or _FAISS_IMPORT_ERROR is not None:
+        return
+    try:
+        import faiss as _faiss  # type: ignore
+    except Exception as e:
+        faiss = None
+        HAS_FAISS = False
+        _FAISS_IMPORT_ERROR = str(e)
+        return
+    faiss = _faiss
     HAS_FAISS = True
-except ImportError:
-    faiss = None
-    HAS_FAISS = False
+    _FAISS_IMPORT_ERROR = None
 
 
 class SimpleLTM(nn.Module):
@@ -143,8 +156,16 @@ class FaissIVFPQLTM(nn.Module):
 
     def __init__(self, cfg: LTMConfig):
         super().__init__()
+        _try_import_faiss()
         if not HAS_FAISS:
-            raise RuntimeError("FAISS not available. Install with: pip install faiss-cpu")
+            hint = "Install with: pip install faiss-cpu"
+            if _FAISS_IMPORT_ERROR:
+                raise RuntimeError(
+                    f"FAISS not available ({_FAISS_IMPORT_ERROR}). {hint}"
+                )
+            raise RuntimeError(
+                f"FAISS not available. {hint}"
+            )
 
         self.cfg = cfg
         self.register_buffer("keys_buf", torch.empty(0, cfg.d_key))
@@ -199,8 +220,14 @@ class FaissIVFPQLTM(nn.Module):
         keys = keys.detach()
         values = values.detach()
 
-        self.keys_buf = torch.cat([self.keys_buf, keys.to(self.keys_buf.device)], dim=0)
-        self.values_buf = torch.cat([self.values_buf, values.to(self.values_buf.device)], dim=0)
+        self.keys_buf = torch.cat(
+            [self.keys_buf, keys.to(self.keys_buf.device)],
+            dim=0,
+        )
+        self.values_buf = torch.cat(
+            [self.values_buf, values.to(self.values_buf.device)],
+            dim=0,
+        )
 
         # Enforce max size
         if self.keys_buf.shape[0] > self.cfg.max_size:
@@ -253,7 +280,11 @@ class FaissIVFPQLTM(nn.Module):
     def clear(self) -> None:
         """Clear all memories."""
         self.keys_buf = torch.empty(0, self.cfg.d_key, device=self.keys_buf.device)
-        self.values_buf = torch.empty(0, self.cfg.d_value, device=self.values_buf.device)
+        self.values_buf = torch.empty(
+            0,
+            self.cfg.d_value,
+            device=self.values_buf.device,
+        )
         self.index.reset()
         self._trained = False
 
@@ -373,6 +404,8 @@ class LTMWrapper(nn.Module):
         self.cfg = cfg
 
         # Create underlying LTM
+        if cfg.use_faiss:
+            _try_import_faiss()
         if cfg.use_faiss and HAS_FAISS:
             self._ltm = FaissIVFPQLTM(cfg)
         else:
@@ -395,7 +428,11 @@ class LTMWrapper(nn.Module):
         else:
             self._ltm.store(keys, values)
 
-    def retrieve(self, queries: torch.Tensor, top_k: Optional[int] = None) -> torch.Tensor:
+    def retrieve(
+        self,
+        queries: torch.Tensor,
+        top_k: Optional[int] = None,
+    ) -> torch.Tensor:
         """Retrieve memories."""
         return self._ltm.retrieve(queries, top_k)
 
